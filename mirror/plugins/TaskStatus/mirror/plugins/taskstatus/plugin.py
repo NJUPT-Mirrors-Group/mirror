@@ -147,6 +147,7 @@ class Plugin(PluginBase):
 
     def __get_mirror_size(self, taskname):
         """
+        only rsync
         :return: 镜像的大小（单位 字节）
         """
         logs = [f for f in os.listdir(self.RSYNC_LOG_PATH) if f.startswith(taskname + '.log')]
@@ -174,7 +175,8 @@ class Plugin(PluginBase):
         # Add info about upstream and mirror size
         if task.__class__.__name__ == "Task":
             status['upstream'] = task.upstream[0] + '::' + task.rsyncdir + '/'
-            status['size'] = self.__get_mirror_size(taskname)
+            if task.cmdname == 'rsync':
+                status['size'] = self.__get_mirror_size(taskname)
         # Read old status file content
         try:
             fp = open(self.status_file, "r+" if os.path.exists(self.status_file) else "w+")
