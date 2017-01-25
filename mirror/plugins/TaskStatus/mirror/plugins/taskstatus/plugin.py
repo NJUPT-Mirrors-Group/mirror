@@ -24,6 +24,9 @@ import os
 import time
 import json
 import logging
+
+import re
+
 import mirror.component as component
 from mirror.pluginbase import PluginBase
 from collections import OrderedDict as odict
@@ -57,6 +60,8 @@ _rsync_error = { 0:  "Sync succeed",
 class Plugin(PluginBase):
 
     DEFAULT_STATUS_FILE = "/home/mirror/status/task_status.json"
+    RSYNC_LOG_PATH = '/var/log/rsync/'
+
 
     STATUS_INITIAL  = 0
     STATUS_RUNNING  = 1
@@ -139,6 +144,25 @@ class Plugin(PluginBase):
             status["schedule"] = "Unknown"
 
         self.__set_task_status(taskname, status)
+
+    def __get_mirror_size(self, taskname):
+        """
+        :return: 镜像的大小（单位 字节）
+        """
+        logs = [f for f in os.listdir(self.RSYNC_LOG_PATH) if f.startswith(taskname + '.log')]
+        try:
+            fp = open(os.path.join(self.RSYNC_LOG_PATH, logs[-1]), "r+")
+            log_text = fp.read()
+            size_list = re.findall(r"total size is (?P<size>[,\d]+)  speedup", log_text)
+            if size_list:
+                return size_list[-1].replace(',', '')
+            else:
+                fp = open(os.path.join(self.RSYNC_LOG_PATH, logs[-2]), "r+")
+                log_text = fp.read()
+                size_list = re.findall(r"total size is (?P<size>[,\d]+)  speedup", log_text)
+                return size_list[-1].replace(',', '')
+        except IndexError:
+            return 0
 
     def __set_task_status(self, taskname, status, overwrite = True):
         scheduler = component.get("Scheduler")
