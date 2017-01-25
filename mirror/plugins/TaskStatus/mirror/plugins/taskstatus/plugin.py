@@ -175,6 +175,7 @@ class Plugin(PluginBase):
         if task.__class__.__name__ == "Task":
             status['upstream'] = task.upstream[0] + '::' + task.rsyncdir + '/'
             status['size'] = self.__get_mirror_size(taskname)
+            log.info('get mirror %s size success', taskname)
         # Read old status file content
         try:
             fp = open(self.status_file, "r+" if os.path.exists(self.status_file) else "w+")
