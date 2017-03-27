@@ -56,7 +56,11 @@ _rsync_error = {0: "Sync succeed",
                 30: "Timeout in data send/receive",
                 35: "Timeout waiting for daemon connection",
                 }
-
+_docker_error = {0: "Sync succeed",
+                 125: "the error is with Docker daemon itself",
+                 126: "the contained command cannot be invoked",
+                 127: "the contained command cannot be found",
+                 }
 
 class Plugin(PluginBase):
     DEFAULT_STATUS_FILE = "/home/mirror/status/task_status.json"
@@ -129,6 +133,11 @@ class Plugin(PluginBase):
         status = {"status": self.STATUS_FINISHED}
         if task.cmdname == "rsync":
             status["message"] = _rsync_error[exitcode]
+        elif task.cmdname == "docker":
+            if exitcode not in _docker_error:
+                status["message"] = "Other error:" + str(exitcode)
+            else:
+                status["message"] = _docker_error[exitcode]
         else:
             status["message"] = "Task finished"
 
