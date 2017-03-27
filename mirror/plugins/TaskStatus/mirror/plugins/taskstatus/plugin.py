@@ -24,6 +24,9 @@ import os
 import time
 import json
 import logging
+
+import re
+
 import mirror.component as component
 from mirror.pluginbase import PluginBase
 from collections import OrderedDict as odict
@@ -32,34 +35,35 @@ _plugin_name = "taskstatus"
 
 log = logging.getLogger(_plugin_name)
 
-_rsync_error = { 0:  "Sync succeed",
-                 1:  "Syntax or usage error",
-                 2:  "Protocol incompatibility",
-                 3:  "Errors selecting input/output files, dirs",
-                 4:  "Requested  action not supported",
-                 5:  "Error starting client-server protocol",
-                 6:  "Daemon unable to append to log-file",
-                10:  "Error in socket I/O",
-                11:  "Error in file I/O",
-                12:  "Error in rsync protocol data stream",
-                13:  "Errors with program diagnostics",
-                14:  "Error in IPC code",
-                20:  "Received SIGUSR1 or SIGINT",
-                21:  "Some error returned by waitpid()",
-                22:  "Error allocating core memory buffers",
-                23:  "Partial transfer due to error",
-                24:  "Partial transfer due to vanished source files",
-                25:  "The --max-delete limit stopped deletions",
-                30:  "Timeout in data send/receive",
-                35:  "Timeout waiting for daemon connection",
-               }
+_rsync_error = {0: "Sync succeed",
+                1: "Syntax or usage error",
+                2: "Protocol incompatibility",
+                3: "Errors selecting input/output files, dirs",
+                4: "Requested  action not supported",
+                5: "Error starting client-server protocol",
+                6: "Daemon unable to append to log-file",
+                10: "Error in socket I/O",
+                11: "Error in file I/O",
+                12: "Error in rsync protocol data stream",
+                13: "Errors with program diagnostics",
+                14: "Error in IPC code",
+                20: "Received SIGUSR1 or SIGINT",
+                21: "Some error returned by waitpid()",
+                22: "Error allocating core memory buffers",
+                23: "Partial transfer due to error",
+                24: "Partial transfer due to vanished source files",
+                25: "The --max-delete limit stopped deletions",
+                30: "Timeout in data send/receive",
+                35: "Timeout waiting for daemon connection",
+                }
+
 
 class Plugin(PluginBase):
-
     DEFAULT_STATUS_FILE = "/home/mirror/status/task_status.json"
+    RSYNC_LOG_PATH = '/var/log/rsync/'
 
-    STATUS_INITIAL  = 0
-    STATUS_RUNNING  = 1
+    STATUS_INITIAL = 0
+    STATUS_RUNNING = 1
     STATUS_FINISHED = 2
 
     DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -76,7 +80,7 @@ class Plugin(PluginBase):
                       ", use default one: %s"), _plugin_name, self.status_file)
 
         self.enabled = True
-        status_dir   = os.path.dirname(self.status_file)
+        status_dir = os.path.dirname(self.status_file)
         if not os.path.exists(status_dir):
             try:
                 os.makedirs(status_dir)
@@ -84,7 +88,7 @@ class Plugin(PluginBase):
                 self.enabled = False
                 log.warning("Create directory failed: %s", status_dir)
 
-        event_manager  = component.get("EventManager")
+        event_manager = component.get("EventManager")
         event_manager.register_event_handler("TaskEnqueueEvent",
                                              self.__on_task_enqueue)
         event_manager.register_event_handler("TaskStartEvent",
@@ -100,18 +104,18 @@ class Plugin(PluginBase):
             return
 
         scheduler = component.get("Scheduler")
-        taskinfo  = scheduler.queue.find(taskname)
-        status    = { "schedule": time.strftime(self.DATE_FORMAT,
-                                       time.localtime(taskinfo.time)) }
-        self.__set_task_status(taskname, status, overwrite = False)
+        taskinfo = scheduler.queue.find(taskname)
+        status = {"schedule": time.strftime(self.DATE_FORMAT,
+                                            time.localtime(taskinfo.time))}
+        self.__set_task_status(taskname, status, overwrite=False)
 
     def __on_task_start(self, taskname, pid):
         if not self.enabled:
             return
 
-        status = { "status": self.STATUS_RUNNING,
-                   "date": time.strftime(self.DATE_FORMAT,
-                                         time.localtime())}
+        status = {"status": self.STATUS_RUNNING,
+                  "date": time.strftime(self.DATE_FORMAT,
+                                        time.localtime())}
         self.__set_task_status(taskname, status)
 
     def __on_task_stop(self, taskname, pid, exitcode):
@@ -122,7 +126,7 @@ class Plugin(PluginBase):
         task = scheduler.tasks.get(taskname, None)
         if not task:
             return
-        status = { "status": self.STATUS_FINISHED }
+        status = {"status": self.STATUS_FINISHED}
         if task.cmdname == "rsync":
             status["message"] = _rsync_error[exitcode]
         else:
@@ -134,22 +138,43 @@ class Plugin(PluginBase):
         taskinfo = scheduler.queue.find(taskname)
         if taskinfo:
             status["schedule"] = time.strftime(self.DATE_FORMAT,
-                                      time.localtime(taskinfo.time))
+                                               time.localtime(taskinfo.time))
         else:
             status["schedule"] = "Unknown"
 
         self.__set_task_status(taskname, status)
 
-    def __set_task_status(self, taskname, status, overwrite = True):
+    def __get_mirror_size(self, taskname):
+        """
+        :return: 镜像的大小（单位 字节）
+        """
+        logs = [f for f in os.listdir(self.RSYNC_LOG_PATH) if f.startswith(taskname + '.log')]
+        try:
+            fp = open(os.path.join(self.RSYNC_LOG_PATH, logs[-1]), "r+")
+            log_text = fp.read()
+            size_list = re.findall(r"total size is (?P<size>[,\d]+)  speedup", log_text)
+            if size_list:
+                return size_list[-1].replace(',', '')
+            else:
+                fp = open(os.path.join(self.RSYNC_LOG_PATH, logs[-2]), "r+")
+                log_text = fp.read()
+                size_list = re.findall(r"total size is (?P<size>[,\d]+)  speedup", log_text)
+                return size_list[-1].replace(',', '')
+        except IndexError:
+            return 0
+
+    def __set_task_status(self, taskname, status, overwrite=True):
         scheduler = component.get("Scheduler")
         task = scheduler.tasks.get(taskname)
         # We do not export internal task's status
         if task.isinternal:
             return
 
-        # Add info about upstream
+        # Add info about upstream and mirror size
         if task.__class__.__name__ == "Task":
             status['upstream'] = task.upstream[0] + '::' + task.rsyncdir + '/'
+            if task.cmdname == "rsync": # todo add other cmd
+                status['size'] = self.__get_mirror_size(taskname)
 
         # Read old status file content
         try:
